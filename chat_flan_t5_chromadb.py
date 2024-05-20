@@ -18,7 +18,7 @@ if not os.path.exists('docs'):
     os.makedirs('docs')
 
 # Streamlit title
-st.title('DocBot - Your Document Assistant')
+st.title('Document Assistant')
 
 # User input for document files
 uploaded_files = st.file_uploader("Upload one or more documents", type=['pdf', 'docx', 'doc', 'txt'], accept_multiple_files=True)
