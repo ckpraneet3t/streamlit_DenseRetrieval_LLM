@@ -9,3 +9,5 @@ sentence_transformers
 faiss_cpu
 chainlit
 streamlit
+langchain_community
+chromadb
