@@ -9,13 +9,7 @@ Original file is located at
 !pip install streamlit
 import streamlit as st
 
-!pip install langchain
-!pip install bitsandbytes accelerate xformers einops
-!pip install datasets loralib sentencepiece
-!pip install pypdf
-!pip install sentence_transformers
-!pip install chromadb
-!pip install faiss-cpu
+
 
 from langchain.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
 from langchain.text_splitter import CharacterTextSplitter
