@@ -22,6 +22,11 @@ if uploaded_files:
     document = []
     for uploaded_file in uploaded_files:
         st.write("Uploaded file:", uploaded_file)  # Debugging statement
+        st.write("File name:", uploaded_file.name)  # Debugging statement
+        st.write("File type:", uploaded_file.type)  # Debugging statement
+        st.write("File size:", uploaded_file.size)  # Debugging statement
+        st.write("File content type:", uploaded_file.content_type)  # Debugging statement
+        st.write("File attributes:", dir(uploaded_file))  # Debugging statement
         if uploaded_file.type == "application/pdf":
             st.write("Processing PDF file...")  # Debugging statement
             loader = PyPDFLoader(uploaded_file)
