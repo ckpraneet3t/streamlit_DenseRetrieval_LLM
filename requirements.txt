@@ -11,3 +11,8 @@ chainlit
 streamlit
 langchain_community
 chromadb
+xformers
+einops
+datasets
+loralib
+sentencepiece
