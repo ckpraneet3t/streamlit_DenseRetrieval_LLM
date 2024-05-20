@@ -25,7 +25,8 @@ if uploaded_files:
         st.write("File name:", uploaded_file.name)  # Debugging statement
         st.write("File type:", uploaded_file.type)  # Debugging statement
         st.write("File size:", uploaded_file.size)  # Debugging statement
-        st.write("File content type:", uploaded_file.content_type)  # Debugging statement
+        if hasattr(uploaded_file, 'content_type'):
+            st.write("File content type:", uploaded_file.content_type)  # Debugging statement
         st.write("File attributes:", dir(uploaded_file))  # Debugging statement
         if uploaded_file.type == "application/pdf":
             st.write("Processing PDF file...")  # Debugging statement
