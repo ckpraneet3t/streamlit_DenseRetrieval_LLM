@@ -1,13 +1,13 @@
 import os
 import tempfile
 import streamlit as st
-from langchain.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.memory.chat_message_histories import StreamlitChatMessageHistory
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import DocArrayInMemorySearch
 from langchain.memory import ConversationBufferMemory
-from langchain.memory.chat_message_histories import StreamlitChatMessageHistory
-from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.chains import ConversationalRetrievalChain
-from langchain.vectorstores import DocArrayInMemorySearch
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from transformers import LlamaTokenizer, LlamaForCausalLM, pipeline
 
@@ -16,6 +16,7 @@ st.title("🦜 LangChain: Chat with Documents")
 
 @st.cache_resource(ttl="1h")
 def configure_retriever(uploaded_files):
+    # Read documents
     docs = []
     temp_dir = tempfile.TemporaryDirectory()
     for file in uploaded_files:
@@ -24,11 +25,18 @@ def configure_retriever(uploaded_files):
             f.write(file.getvalue())
         loader = PyPDFLoader(temp_filepath)
         docs.extend(loader.load())
+
+    # Split documents
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
     splits = text_splitter.split_documents(docs)
+
+    # Create embeddings and store in vectordb
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     vectordb = DocArrayInMemorySearch.from_documents(splits, embeddings)
+
+    # Define retriever
     retriever = vectordb.as_retriever(search_type="mmr", search_kwargs={"k": 2, "fetch_k": 4})
+
     return retriever
 
 class StreamHandler(BaseCallbackHandler):
