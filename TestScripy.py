@@ -1,96 +1,105 @@
-import streamlit as st
 import os
-import numpy as np
-import faiss
-import torch
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
-from langchain import HuggingFacePipeline
-from langchain.chains import ConversationalRetrievalChain
+import tempfile
+import streamlit as st
+from langchain.document_loaders import PyPDFLoader
 from langchain.memory import ConversationBufferMemory
-from langchain.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
-from langchain.text_splitter import CharacterTextSplitter
+from langchain.memory.chat_message_histories import StreamlitChatMessageHistory
 from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import Chroma
-from huggingface_hub import notebook_login
+from langchain.callbacks.base import BaseCallbackHandler
+from langchain.chains import ConversationalRetrievalChain
+from langchain.vectorstores import DocArrayInMemorySearch
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from transformers import LlamaTokenizer, LlamaForCausalLM, pipeline
 
-st.title("Document-based Chatbot")
-uploaded_files = st.file_uploader("Upload your documents", accept_multiple_files=True, type=["pdf", "docx", "txt"])
-if uploaded_files:
-    document = []
-    for uploaded_file in uploaded_files:
-        if uploaded_file.type == "application/pdf":
-            with open(uploaded_file.name, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            loader = PyPDFLoader(uploaded_file.name)
-            document.extend(loader.load())
-        elif uploaded_file.type in ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/msword"]:
-            with open(uploaded_file.name, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            loader = Docx2txtLoader(uploaded_file.name)
-            document.extend(loader.load())
-        elif uploaded_file.type == "text/plain":
-            with open(uploaded_file.name, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            loader = TextLoader(uploaded_file.name)
-            document.extend(loader.load())
+st.set_page_config(page_title="LangChain: Chat with Documents", page_icon="🦜")
+st.title("🦜 LangChain: Chat with Documents")
 
-    document_splitter = CharacterTextSplitter(separator='\n', chunk_size=500, chunk_overlap=100)
-    document_chunks = document_splitter.split_documents(document)
+@st.cache_resource(ttl="1h")
+def configure_retriever(uploaded_files):
+    docs = []
+    temp_dir = tempfile.TemporaryDirectory()
+    for file in uploaded_files:
+        temp_filepath = os.path.join(temp_dir.name, file.name)
+        with open(temp_filepath, "wb") as f:
+            f.write(file.getvalue())
+        loader = PyPDFLoader(temp_filepath)
+        docs.extend(loader.load())
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
+    splits = text_splitter.split_documents(docs)
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    vectordb = DocArrayInMemorySearch.from_documents(splits, embeddings)
+    retriever = vectordb.as_retriever(search_type="mmr", search_kwargs={"k": 2, "fetch_k": 4})
+    return retriever
 
-    # Embed documents and build FAISS index
-    embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
-    document_texts = [doc.page_content for doc in document_chunks]
-    document_embeddings = embeddings.embed_documents(document_texts)
-    document_embeddings_array = np.array(document_embeddings)
+class StreamHandler(BaseCallbackHandler):
+    def __init__(self, container: st.delta_generator.DeltaGenerator, initial_text: str = ""):
+        self.container = container
+        self.text = initial_text
+        self.run_id_ignore_token = None
 
-    # Build the FAISS index
-    d = document_embeddings_array.shape[1]  # Dimension of the embeddings
-    index = faiss.IndexFlatL2(d)  # L2 distance (Euclidean)
-    index.add(document_embeddings_array)
+    def on_llm_start(self, serialized: dict, prompts: list, **kwargs):
+        if prompts[0].startswith("Human"):
+            self.run_id_ignore_token = kwargs.get("run_id")
 
-    vectordb = Chroma.from_documents(document_chunks, embedding=embeddings, persist_directory='./data')
-    vectordb.persist()
-    notebook_login()
-    tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-large")
-    model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-large",
-                                                  device_map='auto',
-                                                  torch_dtype=torch.float16)
+    def on_llm_new_token(self, token: str, **kwargs) -> None:
+        if self.run_id_ignore_token == kwargs.get("run_id", False):
+            return
+        self.text += token
+        self.container.markdown(self.text)
 
-    pipe = pipeline("text2text-generation",
-                    model=model,
-                    tokenizer=tokenizer,
-                    torch_dtype=torch.float16,
-                    device_map='auto',
-                    max_length=512)
+class PrintRetrievalHandler(BaseCallbackHandler):
+    def __init__(self, container):
+        self.status = container.status("**Context Retrieval**")
 
-    llm = HuggingFacePipeline(pipeline=pipe, model_kwargs={'temperature': 0})
+    def on_retriever_start(self, serialized: dict, query: str, **kwargs):
+        self.status.write(f"**Question:** {query}")
+        self.status.update(label=f"**Context Retrieval:** {query}")
 
-    memory = ConversationBufferMemory(memory_key='chat_history', return_messages=True)
+    def on_retriever_end(self, documents, **kwargs):
+        for idx, doc in enumerate(documents):
+            source = os.path.basename(doc.metadata["source"])
+            self.status.write(f"**Document {idx} from {source}**")
+            self.status.markdown(doc.page_content)
+        self.status.update(state="complete")
 
-    retriever = vectordb.as_retriever(search_kwargs={'k': 6})
-    pdf_qa = ConversationalRetrievalChain.from_llm(llm=llm,
-                                                   retriever=retriever,
-                                                   verbose=False,
-                                                   memory=memory)
+uploaded_files = st.sidebar.file_uploader(
+    label="Upload PDF files", type=["pdf"], accept_multiple_files=True
+)
+if not uploaded_files:
+    st.info("Please upload PDF documents to continue.")
+    st.stop()
 
-    st.write('---')
-    st.write("Welcome to the DocBot. You are now ready to start interacting with your documents.")
+retriever = configure_retriever(uploaded_files)
 
-    query = st.text_input("Enter your query:", "")
+# Setup memory for contextual conversation
+msgs = StreamlitChatMessageHistory()
+memory = ConversationBufferMemory(memory_key="chat_history", chat_memory=msgs, return_messages=True)
 
-    if query:
-        # Perform FAISS similarity search
-        query_embedding = np.array(embeddings.embed_documents([query])).reshape(1, -1)
-        k = 6
-        distances, indices = index.search(query_embedding, k)
-        # Retrieve the documents and their scores
-        results = [(document_chunks[idx], distances[0][i]) for i, idx in enumerate(indices[0])]
-        for doc, score in results:
-            st.write(f"Document: {doc.page_content}")
-            st.write(f"Score: {score}")
+# Load Llama model and tokenizer
+model_name = "meta-llama/Llama-2-7b-chat-hf"
+tokenizer = LlamaTokenizer.from_pretrained(model_name)
+model = LlamaForCausalLM.from_pretrained(model_name)
 
-        top_document = results[0][0].page_content if results else "No relevant documents found."
-        result = pdf_qa({"question": query, "context": top_document})
-        st.write(f"Answer: {result['answer']}")
-else:
-    st.write("Please upload documents to proceed.")
+llm_pipeline = pipeline("text-generation", model=model, tokenizer=tokenizer, max_length=512)
+
+# Setup LLM and QA chain
+llm = HuggingFacePipeline(pipeline=llm_pipeline, model_kwargs={'temperature': 0})
+qa_chain = ConversationalRetrievalChain.from_llm(
+    llm, retriever=retriever, memory=memory, verbose=True
+)
+
+if len(msgs.messages) == 0 or st.sidebar.button("Clear message history"):
+    msgs.clear()
+    msgs.add_ai_message("How can I help you?")
+
+avatars = {"human": "user", "ai": "assistant"}
+for msg in msgs.messages:
+    st.chat_message(avatars[msg.type]).write(msg.content)
+
+if user_query := st.chat_input(placeholder="Ask me anything!"):
+    st.chat_message("user").write(user_query)
+
+    with st.chat_message("assistant"):
+        retrieval_handler = PrintRetrievalHandler(st.container())
+        stream_handler = StreamHandler(st.empty())
+        response = qa_chain.run(user_query, callbacks=[retrieval_handler, stream_handler])
