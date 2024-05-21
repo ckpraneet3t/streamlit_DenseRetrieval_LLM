@@ -17,3 +17,5 @@ datasets
 loralib
 sentencepiece
 PyPDF2
+huggingface-hub
+
