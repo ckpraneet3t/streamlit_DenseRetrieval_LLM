@@ -2,9 +2,9 @@ import os
 import tempfile
 import streamlit as st
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.memory.chat_message_histories import StreamlitChatMessageHistory
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import DocArrayInMemorySearch
+from langchain.memory.chat_message_histories import StreamlitChatMessageHistory
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import DocArrayInMemorySearch
 from langchain.memory import ConversationBufferMemory
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.chains import ConversationalRetrievalChain
